@@ -202,7 +202,7 @@ class TsvDataProcessor(DataProcessor):
                     lines.append(line)
             return lines
 
-def convert_single_example(ex_index, label_list, max_seq_length, tokenizer):
+def convert_single_example(ex_index, example, label_list, max_seq_length, tokenizer):
     label_map = {}
     for (i, label) in enumerate(label_list):
         label_map[label] = i
@@ -240,7 +240,7 @@ def convert_single_example(ex_index, label_list, max_seq_length, tokenizer):
         tf.logging.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
         tf.logging.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
         tf.logging.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-        tf.logging.info("label: %s (id = %d)" % (example.label, label_ids))
+        tf.logging.info("labels: %s (ids = %s)" % (str(example.labels), str(label_ids)))
     
     feature = InputFeatures(
         input_ids = input_ids,
@@ -258,7 +258,7 @@ def filed_based_convert_examples_to_features(examples, label_list, max_seq_lengt
         f = tf.train.Feature(int64_list = tf.train.Int64List(value = list(values)))
         return f
     
-    writer = tf.python_io.TfRecordWriter(output_file)
+    writer = tf.python_io.TFRecordWriter(output_file)
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
@@ -271,7 +271,7 @@ def filed_based_convert_examples_to_features(examples, label_list, max_seq_lengt
         features['segment_ids'] = create_int_feature(feature.segment_ids)
         features['label_ids'] = create_int_feature(feature.label_ids)
         
-        tf_example = tf.train.Example(features = tf.train.Features(features = features))
+        tf_example = tf.train.Example(features = tf.train.Features(feature = features))
         writer.write(tf_example.SerializeToString())
 
 def file_based_input_fn_builder(input_file, seq_length, is_training, 
@@ -300,7 +300,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
     
     def input_fn(params):
         '''
-        THe actual input function
+        The actual input function
         '''
         batch_size = params['batch_size']
         d = tf.data.TFRecordDataset(input_file)
@@ -335,7 +335,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
     # Here we are doing classification task on the entire segment
     # If you want to use the token-level output, use model.get_sequence_output() instead
     output_layer = model.get_pooled_output()
-    hidden_size = output_layer[-1].value
+    hidden_size = output_layer.shape[-1].value
     output_weights = tf.get_variable(
         "output_weights", [num_labels, hidden_size],
         initializer = tf.truncated_normal_initializer(stddev = 0.02)
@@ -349,12 +349,12 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
         logits = tf.matmul(output_layer, output_weights, transpose_b = True)
         logits = tf.nn.bias_add(logits, output_bias)
         probs = tf.nn.sigmoid(logits)
-        per_example_loss = tf.nn.sigmoid_cross_entropy(labels = labels, logits = logits)
-        loss = tf.metrics.mean(per_example_loss)
+        per_example_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels = tf.to_float(labels), logits = logits)
+        loss = tf.reduce_mean(per_example_loss)
         return loss, per_example_loss, probs
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
-                    num_training_steps, num_warmup_steps, use_tpu, 
+                    num_train_steps, num_warmup_steps, use_tpu, 
                     use_one_hot_embeddings):
     '''
     Returns `model_fn` closure for TPUEstimator
@@ -419,6 +419,17 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                     'eval_loss': loss
                 }
             eval_metrics = (metric_fn, [per_example_loss, label_ids, probs])
+            output_spec = tf.contrib.tpu.TPUEstimatorSpec(
+                mode = mode,
+                loss = total_loss,
+                eval_metrics = eval_metrics,
+                scaffold_fn = scaffold_fn
+            )
+        else:
+            raise ValueError("Only TRAIN and EVAL modes are supported: %s" % (mode))
+        
+        return output_spec
+
     return model_fn
 
 def main(_):
@@ -465,7 +476,7 @@ def main(_):
     num_train_steps = None
     num_warmup_steps = None
     if FLAGS.do_train:
-        train_examples = processor.get_train_examples(FLAGS.data_dir)
+        train_examples = processor.get_train_examples()
         num_train_steps = int(
             len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs
         )
@@ -495,7 +506,7 @@ def main(_):
     if FLAGS.do_train:
         train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         # This writes to a TfRecord file that the trainer will read from later on
-        file_based_convert_examples_to_features(
+        filed_based_convert_examples_to_features(
             train_examples, label_list, FLAGS.max_seq_length, tokenizer, train_file
         )
         tf.logging.info("**** Running training ****")
@@ -506,14 +517,15 @@ def main(_):
             input_file = train_file,
             seq_length = FLAGS.max_seq_length,
             is_training = True,
-            drop_remainder = True
+            drop_remainder = True,
+            nb_labels = len(label_list)
         )
         estimator.train(input_fn = train_input_fn, max_steps = num_train_steps)
 
     if FLAGS.do_eval:
-        eval_examples = processor.get_dev_examples(FLAGS.data_dir)
+        eval_examples = processor.get_val_examples()
         eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
-        file_based_convert_examples_to_features(
+        filed_based_convert_examples_to_features(
             eval_examples, label_list, FLAGS.max_seq_length, tokenizer, eval_file
         )
         
@@ -533,15 +545,17 @@ def main(_):
             input_file = eval_file,
             seq_length = FLAGS.max_seq_length,
             is_training = False,
-            drop_remainder = eval_drop_remainder
+            drop_remainder = eval_drop_remainder,
+            nb_labels = len(label_list)
         )
+
         result = estimator.evaluate(input_fn = eval_input_fn, steps = eval_steps)
         output_eval_file = os.path.join(FLAGS.output_dir, "eval_results.txt")
         with tf.gfile.GFile(output_eval_file, "w") as writer:
             tf.logging.info("**** Eval results ****")
-            for key in sorted(results.keys()):
-                tf.logging.info("  %s = %s", key, str(results[key]))
+            for key in sorted(result.keys()):
+                tf.logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
-
+        
 if __name__ == "__main__":
     tf.app.run()

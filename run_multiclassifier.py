@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import collections
 import csv
+import json
 import os
 import modeling
 import optimization
@@ -151,6 +152,56 @@ class DataProcessor(object):
     def get_labels(self):
         raise NotImplementedError()
 
+class JsonDataProcessor(DataProcessor):
+    def __init__(self, data_folder):
+        self._data_folder = data_folder
+    
+    def get_train_examples(self):
+        entries = self._read_json(os.path.join(self._data_folder, "train.json"))
+        examples = []
+        for (i, entry) in enumerate(entries):
+            guid = "train-%d" % (i)
+            text = tokenization.convert_to_unicode(entry['text'])
+            labels = entry['labels']
+            labels = [tokenization.convert_to_unicode(label) for label in labels]
+            examples.append(InputExample(guid = guid, text = text, labels = labels))
+        return examples
+    
+    def get_val_examples(self):
+        entries = self._read_json(os.path.joins(self._data_folder, "eval.json"))
+        examples = []
+        for (i, entry) in enumerate(entries):
+            guid = "val-%d" % (i)
+            text = tokenization.convert_to_unicode(entry['text'])
+            labels = entry['labels']
+            labels = [tokenization.convert_to_unicode(label) for label in labels]
+            examples.append(InputExample(guid = guid, text = text, labels = labels))
+        return examples
+    
+    def get_labels(self):
+        labels_set = set()
+        for file_name in ['train.json', 'eval.json']:
+            entries = self._read_json(os.path.join(self._data_folder, file_name))
+            for entry in entries:
+                labels = entry['labels']
+                [labels_set.add(label) for label in labels]
+
+        return list(labels_set)
+    
+    @classmethod
+    def _read_json(cls, input_file, text_field = "text", labels_field = "labels"):
+        with tf.gfile.Open(input_file, "r") as f:
+            json_data = json.load(f)
+            entries = []
+            for doc in json_data:
+                text = doc.get(text_field, "")
+                labels = doc.get(labels_field, [])
+                entries.append({
+                    'text': text,
+                    'labels': labels
+                })
+            return entries
+        
 class TsvDataProcessor(DataProcessor):
     def __init__(self, data_folder):
         self._data_folder = data_folder

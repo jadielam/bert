@@ -15,12 +15,18 @@ import tensorflow as tf
 
 flags = tf.flags
 
-FLAS = flags.FLAGS
+FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
     "data_dir", None,
     "The input data dir. Should contain the .tsv files (or other data files) "
     "for the task."
+)
+
+flags.DEFINE_string(
+    "bert_config_file", None,
+    "The config json file corresponding to the pre-trained BERT model. "
+    "This specifies the model architecture."
 )
 
 flags.DEFINE_string("task_name", None, "The name of the task to train.")
@@ -61,7 +67,7 @@ flags.DEFINE_integer("eval_batch_size", 8, "Total batch size for eval.")
 
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 
-flags.DEFINE_float("num_train_epochs", 3.0, "Total number of training epochs to perform".)
+flags.DEFINE_float("num_train_epochs", 3.0, "Total number of training epochs to perform")
 
 flags.DEFINE_float(
     "warmup_proportion", 0.1,
@@ -222,7 +228,8 @@ def convert_single_example(ex_index, label_list, max_seq_length, tokenizer):
     assert len(input_ids) == max_seq_length
     
     label_ids = [0] * len(label_list)
-    [label_ids[label_map[label]] = 1 for label in example.labels]
+    for idx, label in enumerate(example.labels):
+        label_ids[label_map[label]] = 1
 
     # Log the first few samples for visual inspection.
     if ex_index < 5:
@@ -302,7 +309,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
             d = d.shuffle(buffer_size = 100)
         d = d.apply(
             tf.contrib.data.map_and_batch(
-                lambda record _decode_record(record, name_to_features),
+                lambda record: _decode_record(record, name_to_features),
                 batch_size = batch_size,
                 drop_remainder = drop_remainder
             )
@@ -391,7 +398,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape, init_string)
 
         output_spec = None
-        if mode = tf.estimator.ModeKeys.TRAIN:
+        if mode == tf.estimator.ModeKeys.TRAIN:
             train_op = optimization.create_optimizer(
                 total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu
             )
@@ -418,7 +425,7 @@ def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
     if not FLAGS.do_train and not FLAGS.do_eval:
         raise ValueError("At least one of `do_train` or `do_eval` must be True")
-    bert config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
+    bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
 
     if FLAGS.max_seq_length > bert_config.max_position_embeddings:
         raise ValueError(

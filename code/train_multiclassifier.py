@@ -265,7 +265,7 @@ def convert_single_example(ex_index, example, label_list, max_seq_length, tokeni
     if len(tokens) > max_seq_length - 2:
         tokens = tokens[0 : (max_seq_length - 2)]
     tokens = ["[CLS]"] + tokens + ["[SEP]"]
-    segment_ids = [0] * (len(tokens) + 2)
+    segment_ids = [0] * len(tokens)
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
     # The mask has 1 for real tokens and 0 for padding tokens.  Only real
@@ -277,6 +277,8 @@ def convert_single_example(ex_index, example, label_list, max_seq_length, tokeni
     input_mask = input_mask + [0] * (max_seq_length - len(input_mask))
     segment_ids = segment_ids + [0] * (max_seq_length - len(segment_ids))
     assert len(input_ids) == max_seq_length
+    assert len(input_mask) == max_seq_length
+    assert len(segment_ids) == max_seq_length
     
     label_ids = [0] * len(label_list)
     for idx, label in enumerate(example.labels):
